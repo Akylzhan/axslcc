@@ -44,7 +44,4 @@ if (STATIC_LINK AND NOT MSVC)
 endif()	
 
 install(TARGETS axslcc 
-        CONFIGURATIONS Release
-        RUNTIME DESTINATION bin)
-		
-		
+        RUNTIME DESTINATION bin)		
