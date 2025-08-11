@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.23..4.1)
 project(axslcc)
 
  if (WIN32)
@@ -64,6 +64,7 @@ if (MSVC)
 endif()
 
 set(ENABLE_CTEST FALSE CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
 set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 
 # halx99: optimize require https://github.com/KhronosGroup/SPIRV-Tools?
