@@ -55,7 +55,9 @@
 //      1.9.5       Build for macos-arm64
 //                  Build for macos-10.15
 //      1.9.6       Rename glslcc to axslcc
-//
+//      1.10.0       Update SPIRV-corss to git-7fde353 (Until Aug 11, 2025)
+//                  Fix compile error
+//                  Fix sgs refl mat4 semantic name for HLSL
 
 /**
 * @since 1.9.5 
@@ -82,7 +84,6 @@
 #include "SPIRV/GlslangToSpv.h"
 #include "SPIRV/SpvTools.h"
 #include "SPIRV/disassemble.h"
-#include "SPIRV/spirv.hpp"
 
 #include "glslang/Public/ResourceLimits.h"
 #include "glslang/Public/ShaderLang.h"
@@ -110,8 +111,8 @@
 #include "../3rdparty/sjson/sjson.h"
 
 #define VERSION_MAJOR 1
-#define VERSION_MINOR 9
-#define VERSION_SUB 6
+#define VERSION_MINOR 10
+#define VERSION_SUB 0
 
 static const sx_alloc* g_alloc = sx_alloc_malloc();
 static sgs_file* g_sgs = nullptr;
@@ -1303,6 +1304,8 @@ static int cross_compile(const cmd_args& args, std::vector<uint32_t>& spirv,
             hlsl_opts.shader_model = args.profile_ver;
             hlsl_opts.point_size_compat = true;
             hlsl_opts.point_coord_compat = true;
+            // @v1.10.0
+            hlsl_opts.flatten_matrix_vertex_input_semantics = true;
 
             hlsl->set_hlsl_options(hlsl_opts);
 
@@ -1338,7 +1341,8 @@ static int cross_compile(const cmd_args& args, std::vector<uint32_t>& spirv,
             }
         }
 
-        opts.emit_expanded_uniforms = true;
+        // @v1.10.0 drop GLES-2.0 support
+        // opts.emit_expanded_uniforms = true;
         compiler->set_common_options(opts);
 
         std::string code;
