@@ -7,8 +7,15 @@
 
 - `c++17` required
 
-## 3rdparty
+## ChangeLog
 
+### 1.10.0
+
+- Drop GLSL-1.x support
+- spirv-cross: 7fde353(4072) (Aug 11, 2025)
+- glslang: b4e66d7(5311) (until Aug 8, 2025)
+
+### 1.9.6
 - spriv-cross: 6173e24(3916) (updated on Dec 13, 2024) with modified to support legacy GLSL 1.x, see [spirv_glsl.patch](spirv_glsl.patch)
 - glslang: 340bf88(5171) (updated on Dec 13, 2024)
 
