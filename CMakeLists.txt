@@ -25,7 +25,7 @@ option(ENABLE_SPVREMAPPER "Enables building of SPVRemapper" ON)
 option(ENABLE_AMD_EXTENSIONS "Enables support of AMD-specific extensions" ON)
 option(ENABLE_GLSLANG_BINARIES "Builds glslangValidator and spirv-remap" ON)
 option(ENABLE_NV_EXTENSIONS "Enables support of Nvidia-specific extensions" ON)
-option(ENABLE_HLSL "Enables HLSL input support" OFF)
+option(ENABLE_HLSL "Enables HLSL input support" ON)
 option(ENABLE_OPT "Enables spirv-opt capability if present" ON)
 
 option(USE_CCACHE "Use ccache" OFF)

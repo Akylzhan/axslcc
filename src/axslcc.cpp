@@ -55,9 +55,10 @@
 //      1.9.5       Build for macos-arm64
 //                  Build for macos-10.15
 //      1.9.6       Rename glslcc to axslcc
-//      1.10.0       Update SPIRV-corss to git-7fde353 (Until Aug 11, 2025)
+//      1.10.0      Update SPIRV-corss to git-7fde353 (Until Aug 11, 2025)
 //                  Fix compile error
 //                  Fix sgs refl mat4 semantic name for HLSL
+//      1.11.0      Enables HLSL input support
 
 /**
 * @since 1.9.5 
@@ -93,7 +94,7 @@
 #include "spirv_hlsl.hpp"
 #include "spirv_msl.hpp"
 
-#include "sgs-writer.h"
+#include "axslc-writer.h"
 
 #ifdef D3D11_COMPILER
 #include <d3dcompiler.h>
@@ -111,11 +112,13 @@
 #include "../3rdparty/sjson/sjson.h"
 
 #define VERSION_MAJOR 1
-#define VERSION_MINOR 10
+#define VERSION_MINOR 11
 #define VERSION_SUB 0
 
+using namespace axslc;
+
 static const sx_alloc* g_alloc = sx_alloc_malloc();
-static sgs_file* g_sgs = nullptr;
+static sc_file* g_sgs = nullptr;
 
 struct p_define {
     char* def;
@@ -146,11 +149,11 @@ static const char* k_shader_types[SHADER_LANG_COUNT] = {
 };
 
 static const uint32_t k_shader_langs_fourcc[SHADER_LANG_COUNT] = {
-    SGS_LANG_GLES,
-    SGS_LANG_HLSL,
-    SGS_LANG_MSL,
-    SGS_LANG_GLSL,
-    SGS_LANG_SPIRV,
+    SC_LANG_GLES,
+    SC_LANG_HLSL,
+    SC_LANG_MSL,
+    SC_LANG_GLSL,
+    SC_LANG_SPIRV,
 };
 
 enum vertex_attribs {
@@ -348,7 +351,7 @@ struct cmd_args {
     int flatten_ubos;
     int automap;
     int no_suffix;
-    int sgs_file;
+    int sc_file;
     int reflect;
     int compile_bin;
     int debug_bin;
@@ -363,8 +366,7 @@ struct cmd_args {
 
 static void print_version()
 {
-    printf("glslcc v%d.%d.%d\n", VERSION_MAJOR, VERSION_MINOR, VERSION_SUB);
-    puts("http://www.github.com/septag/glslcc");
+    printf("axslcc v%d.%d.%d\n\nAxslcc suite maintained and supported by axmol community (axmol.dev)", VERSION_MAJOR, VERSION_MINOR, VERSION_SUB);
 }
 
 static void print_help(sx_cmdline_context* ctx)
@@ -592,20 +594,20 @@ struct uniform_type_mapping {
 };
 
 static const uniform_type_mapping k_uniform_map[] = {
-    { spirv_cross::SPIRType::Float, 1, 1, "float", SGS_VERTEXFORMAT_FLOAT },
-    { spirv_cross::SPIRType::Float, 2, 1, "float2", SGS_VERTEXFORMAT_FLOAT2 },
-    { spirv_cross::SPIRType::Float, 3, 1, "float3", SGS_VERTEXFORMAT_FLOAT3 },
-    { spirv_cross::SPIRType::Float, 4, 1, "float4", SGS_VERTEXFORMAT_FLOAT4 },
-    { spirv_cross::SPIRType::Float, 3, 3, "mat3", SGS_VERTEXFORMAT_MAT3 },
-    { spirv_cross::SPIRType::Float, 4, 4, "mat4", SGS_VERTEXFORMAT_MAT4 },
-    { spirv_cross::SPIRType::Int, 1, 1, "int", SGS_VERTEXFORMAT_INT },
-    { spirv_cross::SPIRType::Int, 2, 1, "int2", SGS_VERTEXFORMAT_INT2 },
-    { spirv_cross::SPIRType::Int, 3, 1, "int3", SGS_VERTEXFORMAT_INT3 },
-    { spirv_cross::SPIRType::Int, 4, 1, "int4", SGS_VERTEXFORMAT_INT4 },
-    { spirv_cross::SPIRType::Half, 4, 1, "float", SGS_VERTEXFORMAT_FLOAT },
-    { spirv_cross::SPIRType::Half, 4, 2, "float2", SGS_VERTEXFORMAT_FLOAT2 },
-    { spirv_cross::SPIRType::Half, 4, 3, "float3", SGS_VERTEXFORMAT_FLOAT3 },
-    { spirv_cross::SPIRType::Half, 4, 4, "float4", SGS_VERTEXFORMAT_FLOAT4 }
+    { spirv_cross::SPIRType::Float, 1, 1, "float", SC_VERTEXFORMAT_FLOAT },
+    { spirv_cross::SPIRType::Float, 2, 1, "float2", SC_VERTEXFORMAT_FLOAT2 },
+    { spirv_cross::SPIRType::Float, 3, 1, "float3", SC_VERTEXFORMAT_FLOAT3 },
+    { spirv_cross::SPIRType::Float, 4, 1, "float4", SC_VERTEXFORMAT_FLOAT4 },
+    { spirv_cross::SPIRType::Float, 3, 3, "mat3", SC_VERTEXFORMAT_MAT3 },
+    { spirv_cross::SPIRType::Float, 4, 4, "mat4", SC_VERTEXFORMAT_MAT4 },
+    { spirv_cross::SPIRType::Int, 1, 1, "int", SC_VERTEXFORMAT_INT },
+    { spirv_cross::SPIRType::Int, 2, 1, "int2", SC_VERTEXFORMAT_INT2 },
+    { spirv_cross::SPIRType::Int, 3, 1, "int3", SC_VERTEXFORMAT_INT3 },
+    { spirv_cross::SPIRType::Int, 4, 1, "int4", SC_VERTEXFORMAT_INT4 },
+    { spirv_cross::SPIRType::Half, 4, 1, "float", SC_VERTEXFORMAT_FLOAT },
+    { spirv_cross::SPIRType::Half, 4, 2, "float2", SC_VERTEXFORMAT_FLOAT2 },
+    { spirv_cross::SPIRType::Half, 4, 3, "float3", SC_VERTEXFORMAT_FLOAT3 },
+    { spirv_cross::SPIRType::Half, 4, 4, "float4", SC_VERTEXFORMAT_FLOAT4 }
 };
 
 static const char* spirv_basetype_to_name(int basetype)
@@ -733,13 +735,13 @@ const char* k_texture_dim_str[spv::DimSubpassData + 1] = {
 };
 
 const uint32_t k_texture_dim_fourcc[spv::DimSubpassData + 1] = {
-    SGS_IMAGEDIM_1D,
-    SGS_IMAGEDIM_2D,
-    SGS_IMAGEDIM_3D,
-    SGS_IMAGEDIM_CUBE,
-    SGS_IMAGEDIM_RECT,
-    SGS_IMAGEDIM_BUFFER,
-    SGS_IMAGEDIM_SUBPASS
+    SC_IMAGEDIM_1D,
+    SC_IMAGEDIM_2D,
+    SC_IMAGEDIM_3D,
+    SC_IMAGEDIM_CUBE,
+    SC_IMAGEDIM_RECT,
+    SC_IMAGEDIM_BUFFER,
+    SC_IMAGEDIM_SUBPASS
 };
 
 // https://github.com/KhronosGroup/SPIRV-Cross/wiki/Reflection-API-user-guide
@@ -1041,7 +1043,7 @@ static void output_resource_info_bin(sx_mem_writer* w, uint32_t* num_values,
 
         // Some extra
         if (res_type == RES_TYPE_UNIFORM_BUFFER) {
-            sgs_refl_ub u = { 0 };
+            sc_refl_ub u = { 0 };
 
             sx_strcpy(u.name, sizeof(u.name), name.c_str());
             u.binding = binding;
@@ -1054,7 +1056,7 @@ static void output_resource_info_bin(sx_mem_writer* w, uint32_t* num_values,
                 u.num_members = static_cast<uint16_t>(type.member_types.size());
             }
 
-            auto block_size_offset = w->pos + offsetof(sgs_refl_ub, size_bytes);
+            auto block_size_offset = w->pos + offsetof(sc_refl_ub, size_bytes);
             sx_mem_write_var(w, u);
 
             if (u.num_members > 0) {
@@ -1065,7 +1067,7 @@ static void output_resource_info_bin(sx_mem_writer* w, uint32_t* num_values,
                 } align_data;
                 for (int member_idx = 0; member_idx < type.member_types.size(); ++member_idx) {
                     auto& member_type = compiler.get_type(type.member_types[member_idx]);
-                    sgs_refl_ub_member um = { 0 };
+                    sc_refl_ub_member um = { 0 };
                     sx_strcpy(um.name, sizeof(um.name), compiler.get_member_name(type.self, member_idx).c_str());
                     um.offset = compiler.type_struct_member_offset(type, member_idx);
                     um.size_bytes = static_cast<uint32_t>(compiler.get_declared_struct_member_size(type, member_idx));
@@ -1095,7 +1097,7 @@ static void output_resource_info_bin(sx_mem_writer* w, uint32_t* num_values,
                 }
             }
         } else if (res_type == RES_TYPE_TEXTURE) {
-            sgs_refl_texture t = { 0 };
+            sc_refl_texture t = { 0 };
 
             sx_strcpy(t.name, sizeof(t.name), name.c_str());
             t.binding = binding;
@@ -1104,7 +1106,7 @@ static void output_resource_info_bin(sx_mem_writer* w, uint32_t* num_values,
             t.is_array = type.image.arrayed ? 1 : 0;
             sx_mem_write_var(w, t);
         } else if (res_type == RES_TYPE_VERTEX_INPUT) {
-            sgs_refl_input i = { 0 };
+            sc_refl_input i = { 0 };
 
             sx_strcpy(i.name, sizeof(i.name), name.c_str());
             i.loc = loc;
@@ -1113,7 +1115,7 @@ static void output_resource_info_bin(sx_mem_writer* w, uint32_t* num_values,
             i.format = resolve_variable_type(type);
             sx_mem_write_var(w, i);
         } else if (res_type == RES_TYPE_SSBO) {
-            sgs_refl_buffer b = { 0 };
+            sc_refl_buffer b = { 0 };
             sx_strcpy(b.name, sizeof(b.name), name.c_str());
             b.binding = binding;
             b.size_bytes = block_size;
@@ -1135,7 +1137,7 @@ static int output_reflection_bin(const cmd_args& args, const spirv_cross::Compil
     sx_mem_writer w;
     sx_mem_init_writer(&w, g_alloc, 2048);
 
-    sgs_chunk_refl refl;
+    sc_chunk_refl refl;
     sx_memset(&refl, 0x0, sizeof(refl));
     sx_os_path_basename(refl.name, sizeof(refl.name), filename);
     refl.flatten_ubos = args.flatten_ubos;
@@ -1366,13 +1368,13 @@ static int cross_compile(const cmd_args& args, std::vector<uint32_t>& spirv,
             uint32_t sstage;
             switch (stage) {
             case EShLangVertex:
-                sstage = SGS_STAGE_VERTEX;
+                sstage = SC_STAGE_VERTEX;
                 break;
             case EShLangFragment:
-                sstage = SGS_STAGE_FRAGMENT;
+                sstage = SC_STAGE_FRAGMENT;
                 break;
             case EShLangCompute:
-                sstage = SGS_STAGE_COMPUTE;
+                sstage = SC_STAGE_COMPUTE;
                 break;
             default:
                 sstage = 0;
@@ -1388,21 +1390,21 @@ static int cross_compile(const cmd_args& args, std::vector<uint32_t>& spirv,
                     return -1;
                 }
 
-                sgs_add_stage_code_bin(g_sgs, sstage, mem->data, mem->size);
+                sc_add_stage_code_bin(g_sgs, sstage, mem->data, mem->size);
                 sx_mem_destroy_block(mem);
 #endif
             } else {
                 if (args.lang != SHADER_LANG_SPIRV) {
-                    sgs_add_stage_code(g_sgs, sstage, code.c_str());
+                    sc_add_stage_code(g_sgs, sstage, code.c_str());
                 } else {
-                    sgs_add_stage_code_bin(g_sgs, sstage, spirv.data(), (int)spirv.size());
+                    sc_add_stage_code_bin(g_sgs, sstage, spirv.data(), (int)spirv.size());
                 }
             }
 
             if (args.reflect) {
                 sx_mem_block* mem = nullptr;
                 auto refl_bytes = output_reflection_bin(args, *compiler, ress, args.out_filepath, stage, &mem);
-                sgs_add_stage_reflect(g_sgs, sstage, mem->data, refl_bytes);
+                sc_add_stage_reflect(g_sgs, sstage, mem->data, refl_bytes);
                 sx_mem_destroy_block(mem);
             }
         } else {
@@ -1908,7 +1910,7 @@ int main(int argc, char* argv[])
         { "cvar", 'N', SX_CMDLINE_OPTYPE_REQUIRED, 0x0, 'N', "Outputs Hex data to a C include file with a variable name", "VariableName" },
         { "flatten-ubos", 'F', SX_CMDLINE_OPTYPE_FLAG_SET, &args.flatten_ubos, 1, "Flatten UBOs, useful for ES2 shaders", 0x0 },
         { "reflect", 'r', SX_CMDLINE_OPTYPE_OPTIONAL, 0x0, 'r', "Output shader reflection information to a json file", "Filepath" },
-        { "sgs", 'G', SX_CMDLINE_OPTYPE_FLAG_SET, &args.sgs_file, 1, "Output file should be packed SGS format", "Filepath" },
+        { "sgs", 'G', SX_CMDLINE_OPTYPE_FLAG_SET, &args.sc_file, 1, "Output file should be packed SGS format", "Filepath" },
         { "bin", 'b', SX_CMDLINE_OPTYPE_FLAG_SET, &args.compile_bin, 1, "Compile to bytecode instead of source. requires ENABLE_D3D11_COMPILER build flag", 0x0 },
         { "debug", 'g', SX_CMDLINE_OPTYPE_FLAG_SET, &args.debug_bin, 1, "Generate debug info for binary compilation, should come with --bin", 0x0 },
         { "optimize", 'O', SX_CMDLINE_OPTYPE_FLAG_SET, &args.optimize, 1, "Optimize shader for release compilation", 0x0 },
@@ -2023,7 +2025,7 @@ int main(int argc, char* argv[])
         char ext[32];
         sx_os_path_ext(ext, sizeof(ext), args.out_filepath);
         if (sx_strequalnocase(ext, ".sgs"))
-            args.sgs_file = 1;
+            args.sc_file = 1;
     }
 
     // Set default shader profile version
@@ -2057,39 +2059,39 @@ int main(int argc, char* argv[])
     }
 #endif
 
-    if (args.sgs_file && !(args.preprocess | args.validate | args.list_includes)) {
+    if (args.sc_file && !(args.preprocess | args.validate | args.list_includes)) {
         uint32_t slang = 0;
         switch (args.lang) {
         case SHADER_LANG_ESSL:
-            slang = SGS_LANG_GLES;
+            slang = SC_LANG_GLES;
             break;
         case SHADER_LANG_HLSL:
-            slang = SGS_LANG_HLSL;
+            slang = SC_LANG_HLSL;
             break;
         case SHADER_LANG_MSL:
-            slang = SGS_LANG_MSL;
+            slang = SC_LANG_MSL;
             break;
         case SHADER_LANG_GLSL:
-            slang = SGS_LANG_GLSL;
+            slang = SC_LANG_GLSL;
             break;
         case SHADER_LANG_SPIRV:
-            slang = SGS_LANG_SPIRV;
+            slang = SC_LANG_SPIRV;
             break;
         default:
             sx_assert(0);
             break;
         }
-        g_sgs = sgs_create_file(g_alloc, args.out_filepath, slang, args.profile_ver);
+        g_sgs = sc_create_file(g_alloc, args.out_filepath, slang, args.profile_ver);
         sx_assert(g_sgs);
     }
 
     int r = compile_files(args, *GetDefaultResources());
 
     if (g_sgs) {
-        if (r == 0 && !sgs_commit(g_sgs)) {
+        if (r == 0 && !sc_commit(g_sgs)) {
             printf("Writing SGS file '%s' failed\n", args.out_filepath);
         }
-        sgs_destroy_file(g_sgs);
+        sc_destroy_file(g_sgs);
     }
 
     sx_cmdline_destroy_context(cmdline, g_alloc);

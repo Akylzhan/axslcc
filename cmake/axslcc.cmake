@@ -1,4 +1,4 @@
-# glslcc.cmake: helper for integrating glslcc compilation into cmake projects
+# axslcc.cmake: helper for integrating glslcc compilation into cmake projects
 # Copyright 2019 Sepehr Taghdisian. All rights reserved. 
 # https://github.com/septag/glslcc
 #

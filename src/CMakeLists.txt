@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.23..4.1)
 
 set(SOURCE_FILES "axslcc.cpp"
-                 "sgs-spec.h"
-                 "sgs-writer.h" 
-                 "sgs-writer.cpp")
+                 "axslc-spec.h"
+                 "axslc-writer.h" 
+                 "axslc-writer.cpp")
 				 
 add_executable(axslcc ${SOURCE_FILES})
 
