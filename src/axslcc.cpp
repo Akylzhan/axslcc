@@ -59,6 +59,10 @@
 //                  Fix compile error
 //                  Fix sgs refl mat4 semantic name for HLSL
 //      1.11.0      Enables HLSL input support
+//      1.12.0      Fix msl vertex location overlaps when contains mat4
+//                  Add option --msl_ios for target iOS MSL
+//                  Add option --fixup_clipspace
+//                  Add option --msl_reset_vlocs
 
 /**
 * @since 1.9.5 
@@ -112,7 +116,7 @@
 #include "../3rdparty/sjson/sjson.h"
 
 #define VERSION_MAJOR 1
-#define VERSION_MINOR 11
+#define VERSION_MINOR 12
 #define VERSION_SUB 0
 
 using namespace axslc;
@@ -348,8 +352,6 @@ struct cmd_args {
     int profile_ver;
     int invert_y;
     int preprocess;
-    int flatten_ubos;
-    int automap;
     int no_suffix;
     int sc_file;
     int reflect;
@@ -359,6 +361,11 @@ struct cmd_args {
     int silent;
     int validate;
     int list_includes;
+    int flatten_ubos; // obsoluted
+    int automap;
+    int msl_ios;
+    int fixup_clipspace;
+    int msl_reset_vlocs;
     output_error_format err_format;
     const char* cvar;
     const char* reflect_filepath;
@@ -1292,6 +1299,8 @@ static int cross_compile(const cmd_args& args, std::vector<uint32_t>& spirv,
 
         spirv_cross::CompilerGLSL::Options opts = compiler->get_common_options();
         opts.flatten_multidimensional_arrays = true;
+        if (args.fixup_clipspace)
+            opts.vertex.fixup_clipspace = !!args.fixup_clipspace;
         if (args.lang == SHADER_LANG_ESSL) {
             opts.es = true;
             opts.version = args.profile_ver;
@@ -1316,10 +1325,19 @@ static int cross_compile(const cmd_args& args, std::vector<uint32_t>& spirv,
                 hlsl->set_decoration(new_builtin, spv::DecorationDescriptorSet, 0);
                 hlsl->set_decoration(new_builtin, spv::DecorationBinding, 0);
             }
+
+            // set hlsl vertex attribute remap
+            for (int i = 0; i < VERTEX_ATTRIB_COUNT; ++i) {
+                spirv_cross::HLSLVertexAttributeRemap remap = { (uint32_t)i, k_attrib_names[i] };
+                hlsl->add_vertex_attribute_remap(remap);
+            }
         } else if (args.lang == SHADER_LANG_MSL) {
             spirv_cross::CompilerMSL* msl = (spirv_cross::CompilerMSL*)compiler.get();
             spirv_cross::CompilerMSL::Options msl_opts = msl->get_msl_options();
             msl_opts.enable_decoration_binding = true;
+            // msl_opts.enable_base_index_zero = true;
+            msl_opts.ios_support_base_vertex_instance = true; // ios-9.0+
+            msl_opts.platform = args.msl_ios ? spirv_cross::CompilerMSL::Options::Platform::iOS : spirv_cross::CompilerMSL::Options::Platform::macOS;
             msl->set_msl_options(msl_opts);
         }
 
@@ -1332,14 +1350,15 @@ static int cross_compile(const cmd_args& args, std::vector<uint32_t>& spirv,
         }
 
         // Reset vertex input locations for MSL
-        if (args.lang == SHADER_LANG_MSL && stage == EShLangVertex) {
+        if (args.msl_reset_vlocs && args.lang == SHADER_LANG_MSL && stage == EShLangVertex) {
+            int location = 0;
+            spirv_cross::CompilerMSL* msl = (spirv_cross::CompilerMSL*)compiler.get();
             for (int i = 0; i < ress.stage_inputs.size(); i++) {
                 spirv_cross::Resource& res = ress.stage_inputs[i];
                 spirv_cross::Bitset mask = compiler->get_decoration_bitset(res.id);
-
-                if (mask.get(spv::DecorationLocation)) {
-                    compiler->set_decoration(res.id, spv::DecorationLocation, (uint32_t)i);
-                }
+                auto& type = compiler->get_type(res.type_id);
+                compiler->set_decoration(res.id, spv::DecorationLocation, location);
+                location += type.columns;
             }
         }
 
@@ -1347,21 +1366,7 @@ static int cross_compile(const cmd_args& args, std::vector<uint32_t>& spirv,
         // opts.emit_expanded_uniforms = true;
         compiler->set_common_options(opts);
 
-        std::string code;
-        // Prepare vertex attribute remap for HLSL
-        if (args.lang == SHADER_LANG_HLSL) {
-            // std::vector<spirv_cross::HLSLVertexAttributeRemap> remaps;
-            spirv_cross::CompilerHLSL* hlsl_compiler = (spirv_cross::CompilerHLSL*)compiler.get();
-            for (int i = 0; i < VERTEX_ATTRIB_COUNT; i++) {
-                spirv_cross::HLSLVertexAttributeRemap remap = { (uint32_t)i, k_attrib_names[i] };
-                // remaps.push_back(std::move(remap));
-                hlsl_compiler->add_vertex_attribute_remap(remap);
-            }
-
-            code = hlsl_compiler->compile();
-        } else {
-            code = compiler->compile();
-        }
+        std::string code = compiler->compile();
 
         // Output code
         if (g_sgs) {
@@ -1899,7 +1904,7 @@ int main(int argc, char* argv[])
         { "compute", 'c', SX_CMDLINE_OPTYPE_REQUIRED, 0x0, 'c', "Compute shader source file", "Filepath" },
         { "output", 'o', SX_CMDLINE_OPTYPE_REQUIRED, 0x0, 'o', "Output file", "Filepath" },
         { "lang", 'l', SX_CMDLINE_OPTYPE_REQUIRED, 0x0, 'l', "Convert to shader language", "essl/msl/hlsl/glsl/spirv" },
-        { "automap", 'a', SX_CMDLINE_OPTYPE_FLAG_SET, &args.automap, 1, "This option remove binding and location requirement in shader", 0x0 },
+        
         { "no-suffix", 'u', SX_CMDLINE_OPTYPE_FLAG_SET, &args.no_suffix, 1, "This option is for don't add _fs or _vs suffix in output file", 0x0 },
         { "defines", 'D', SX_CMDLINE_OPTYPE_OPTIONAL, 0x0, 'D', "Preprocessor definitions, seperated by comma or ';'", "Defines" },
         { "invert-y", 'Y', SX_CMDLINE_OPTYPE_FLAG_SET, &args.invert_y, 1, "Invert position.y in vertex shader", 0x0 },
@@ -1908,7 +1913,15 @@ int main(int argc, char* argv[])
         { "include-dirs", 'I', SX_CMDLINE_OPTYPE_REQUIRED, 0x0, 'I', "Set include directory for <system> files, seperated by ';'", "Directory(s)" },
         { "preprocess", 'P', SX_CMDLINE_OPTYPE_FLAG_SET, &args.preprocess, 1, "Dump preprocessed result to terminal" },
         { "cvar", 'N', SX_CMDLINE_OPTYPE_REQUIRED, 0x0, 'N', "Outputs Hex data to a C include file with a variable name", "VariableName" },
+
+        { "msl-ios", 'm', SX_CMDLINE_OPTYPE_FLAG_SET, &args.msl_ios, 1, "Target iOS Metal instead of macOS Metal", 0x0 },
+        { "msl-reset-vlocs", 'R', SX_CMDLINE_OPTYPE_FLAG_SET, &args.msl_reset_vlocs, 1, "Whether reset MSL vertex locations", 0x0 },
+        { "automap", 'a', SX_CMDLINE_OPTYPE_FLAG_SET, &args.automap, 1, "This option remove binding and location requirement in shader", 0x0 },
         { "flatten-ubos", 'F', SX_CMDLINE_OPTYPE_FLAG_SET, &args.flatten_ubos, 1, "Flatten UBOs, useful for ES2 shaders", 0x0 },
+        { "fixup-clipspace", 'x', SX_CMDLINE_OPTYPE_FLAG_SET, &args.fixup_clipspace, 1, "Fixup Z clip-space at the end of a vertex shader. The behavior is backend-dependent.\n"
+                                                                              "\t\tGLSL: Rewrites [0, w] Z range (D3D/Metal/Vulkan) to GL-style [-w, w].\n"
+                                                                              "\t\tHLSL/MSL: Rewrites [-w, w] Z range (GL) to D3D/Metal/Vulkan-style [0, w].\n",
+            0x0 },
         { "reflect", 'r', SX_CMDLINE_OPTYPE_OPTIONAL, 0x0, 'r', "Output shader reflection information to a json file", "Filepath" },
         { "sgs", 'G', SX_CMDLINE_OPTYPE_FLAG_SET, &args.sc_file, 1, "Output file should be packed SGS format", "Filepath" },
         { "bin", 'b', SX_CMDLINE_OPTYPE_FLAG_SET, &args.compile_bin, 1, "Compile to bytecode instead of source. requires ENABLE_D3D11_COMPILER build flag", 0x0 },
@@ -1923,8 +1936,7 @@ int main(int argc, char* argv[])
     };
     sx_cmdline_context* cmdline = sx_cmdline_create_context(g_alloc, argc, (const char**)argv, opts);
 
-    // always include the
-
+    // non-flag options need assign manually
     int opt;
     const char* arg;
     while ((opt = sx_cmdline_next(cmdline, NULL, &arg)) != -1) {

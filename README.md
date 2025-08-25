@@ -9,10 +9,23 @@ It uses [glslang](https://github.com/KhronosGroup/glslang) for parsing GLSL and 
 
 ## ChangeLog
 
+### 1.12.0
+
+- Fix msl vertex location overlaps when contains mat4
+- Add option `--msl_ios` for target iOS MSL
+- Add option `--fixup_clipspace`
+- Add option `--msl_reset_vlocs`
+- spirv-cross: 0a88b2d(4087) (until Aug 18, 2025)
+- glslang: 09d803c(5321) (until Aug 26, 2025)
+
+### 1.11.0
+
+- Enables HLSL input support
+
 ### 1.10.0
 
 - Drop GLSL-1.x support
-- spirv-cross: 7fde353(4072) (Aug 11, 2025)
+- spirv-cross: 7fde353(4072) (until Aug 11, 2025)
 - glslang: b4e66d7(5311) (until Aug 8, 2025)
 
 ### 1.9.6
