@@ -64,14 +64,15 @@
 //                  Add option --fixup_clipspace
 //                  Add option --msl_reset_vlocs
 //      1.13.0      Target MSL default version to 2.0
+//      1.13.1      Split legacy --automap option into two distinct flags: --auto-map-bindings (for resource bindings) and --auto-map-locations (for shader I/O locations).
 
 /**
-* @since 1.9.5 
-* - Fix MSL texture order does not follow GLSL binding order
-*   - https://github.com/KhronosGroup/SPIRV-Cross/issues/2140
-*   - https://github.com/KhronosGroup/SPIRV-Cross/issues/1971
-*   - https://github.com/KhronosGroup/SPIRV-Cross/issues/1464
-*/
+ * @since 1.9.5
+ * - Fix MSL texture order does not follow GLSL binding order
+ *   - https://github.com/KhronosGroup/SPIRV-Cross/issues/2140
+ *   - https://github.com/KhronosGroup/SPIRV-Cross/issues/1971
+ *   - https://github.com/KhronosGroup/SPIRV-Cross/issues/1464
+ */
 
 #define _ALLOW_KEYWORD_MACROS
 
@@ -118,7 +119,7 @@
 
 #define VERSION_MAJOR 1
 #define VERSION_MINOR 13
-#define VERSION_SUB 0
+#define VERSION_SUB 1
 
 using namespace axslc;
 
@@ -363,7 +364,8 @@ struct cmd_args {
     int validate;
     int list_includes;
     int flatten_ubos; // obsoluted
-    int automap;
+    int auto_map_bindings;
+    int auto_map_locations;
     int msl_ios;
     int fixup_clipspace;
     int msl_reset_vlocs;
@@ -1096,7 +1098,7 @@ static void output_resource_info_bin(sx_mem_writer* w, uint32_t* num_values,
                 }
 
                 if (is_msl && align_data.offset >= 0) {
-#define GLSLCC_ALIGN_VALUE(d, a) (((d) + ((a)-1)) & ~((a)-1))
+#define GLSLCC_ALIGN_VALUE(d, a) (((d) + ((a) - 1)) & ~((a) - 1))
                     int& stored_block_size = *(int*)(w->data + block_size_offset);
                     int aligned_block_size = GLSLCC_ALIGN_VALUE((align_data.offset + align_data.size_bytes), align_data.align);
                     if (stored_block_size != aligned_block_size) {
@@ -1571,19 +1573,19 @@ static void output_error(const char* err_str, const cmd_args& args, const char* 
         if (args.err_format == OUTPUT_ERRORFORMAT_GLSLANG) {
             fprintf(stdout, "%s\n", filename);
             for (std::vector<output_parse_result>::iterator il = lines.begin();
-                 il != lines.end(); ++il) {
+                il != lines.end(); ++il) {
                 fprintf(stdout, "ERROR: 0:%d:%s\n", il->line + start_line, il->err.c_str());
             }
         } else if (args.err_format == OUTPUT_ERRORFORMAT_MSVC) {
             for (std::vector<output_parse_result>::iterator il = lines.begin();
-                 il != lines.end(); ++il) {
+                il != lines.end(); ++il) {
                 char fullpath[256];
                 sx_os_path_abspath(fullpath, sizeof(fullpath), il->file.c_str());
                 fprintf(stderr, "%s(%d,0): error:%s\n", fullpath, il->line + start_line, il->err.c_str());
             }
         } else if (args.err_format == OUTPUT_ERRORFORMAT_GCC) {
             for (std::vector<output_parse_result>::iterator il = lines.begin();
-                 il != lines.end(); ++il) {
+                il != lines.end(); ++il) {
                 char fullpath[256];
                 sx_os_path_abspath(fullpath, sizeof(fullpath), il->file.c_str());
                 fprintf(stderr, "%s:%d:0: error:%s\n", fullpath, il->line + start_line, il->err.c_str());
@@ -1787,10 +1789,12 @@ static int compile_files(cmd_args& args, const TBuiltInResource& limits_conf)
         shader->setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
 
         // refer to: https://github.com/septag/glslcc/issues/18
-        if (args.automap) {
+        if (args.auto_map_bindings) {
             shader->setAutoMapBindings(true);
-            shader->setAutoMapLocations(true);
         }
+
+        if (args.auto_map_locations)
+            shader->setAutoMapLocations(true);
 
         add_defines(shader, args, def);
 
@@ -1906,7 +1910,7 @@ int main(int argc, char* argv[])
         { "compute", 'c', SX_CMDLINE_OPTYPE_REQUIRED, 0x0, 'c', "Compute shader source file", "Filepath" },
         { "output", 'o', SX_CMDLINE_OPTYPE_REQUIRED, 0x0, 'o', "Output file", "Filepath" },
         { "lang", 'l', SX_CMDLINE_OPTYPE_REQUIRED, 0x0, 'l', "Convert to shader language", "essl/msl/hlsl/glsl/spirv" },
-        
+
         { "no-suffix", 'u', SX_CMDLINE_OPTYPE_FLAG_SET, &args.no_suffix, 1, "This option is for don't add _fs or _vs suffix in output file", 0x0 },
         { "defines", 'D', SX_CMDLINE_OPTYPE_OPTIONAL, 0x0, 'D', "Preprocessor definitions, seperated by comma or ';'", "Defines" },
         { "invert-y", 'Y', SX_CMDLINE_OPTYPE_FLAG_SET, &args.invert_y, 1, "Invert position.y in vertex shader", 0x0 },
@@ -1916,14 +1920,18 @@ int main(int argc, char* argv[])
         { "preprocess", 'P', SX_CMDLINE_OPTYPE_FLAG_SET, &args.preprocess, 1, "Dump preprocessed result to terminal" },
         { "cvar", 'N', SX_CMDLINE_OPTYPE_REQUIRED, 0x0, 'N', "Outputs Hex data to a C include file with a variable name", "VariableName" },
 
-        { "msl-ios", 'm', SX_CMDLINE_OPTYPE_FLAG_SET, &args.msl_ios, 1, "Target iOS Metal instead of macOS Metal", 0x0 },
-        { "msl-reset-vlocs", 'R', SX_CMDLINE_OPTYPE_FLAG_SET, &args.msl_reset_vlocs, 1, "Whether reset MSL vertex locations", 0x0 },
-        { "automap", 'a', SX_CMDLINE_OPTYPE_FLAG_SET, &args.automap, 1, "This option remove binding and location requirement in shader", 0x0 },
-        { "flatten-ubos", 'F', SX_CMDLINE_OPTYPE_FLAG_SET, &args.flatten_ubos, 1, "Flatten UBOs, useful for ES2 shaders", 0x0 },
-        { "fixup-clipspace", 'x', SX_CMDLINE_OPTYPE_FLAG_SET, &args.fixup_clipspace, 1, "Fixup Z clip-space at the end of a vertex shader. The behavior is backend-dependent.\n"
-                                                                              "\t\tGLSL: Rewrites [0, w] Z range (D3D/Metal/Vulkan) to GL-style [-w, w].\n"
-                                                                              "\t\tHLSL/MSL: Rewrites [-w, w] Z range (GL) to D3D/Metal/Vulkan-style [0, w].\n",
+        // axmol spec start
+        { "msl-ios", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.msl_ios, 1, "Target iOS Metal instead of macOS Metal", 0x0 },
+        { "msl-reset-vlocs", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.msl_reset_vlocs, 1, "Whether reset MSL vertex locations", 0x0 },
+        { "auto-map-bindings", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.auto_map_bindings, 1, "This option remove binding requirement in shader", 0x0 },
+        { "auto-map-locations", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.auto_map_locations, 1, "This option remove location requirement in shader", 0x0 },
+        { "flatten-ubos", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.flatten_ubos, 1, "Flatten UBOs, useful for ES2 shaders (obsoleted)", 0x0 },
+        { "fixup-clipspace", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.fixup_clipspace, 1, "Fixup Z clip-space at the end of a vertex shader. The behavior is backend-dependent.\n"
+                                                                                        "\t\tGLSL: Rewrites [0, w] Z range (D3D/Metal/Vulkan) to GL-style [-w, w].\n"
+                                                                                        "\t\tHLSL/MSL: Rewrites [-w, w] Z range (GL) to D3D/Metal/Vulkan-style [0, w].\n",
             0x0 },
+        // axmol spec end
+
         { "reflect", 'r', SX_CMDLINE_OPTYPE_OPTIONAL, 0x0, 'r', "Output shader reflection information to a json file", "Filepath" },
         { "sgs", 'G', SX_CMDLINE_OPTYPE_FLAG_SET, &args.sc_file, 1, "Output file should be packed SGS format", "Filepath" },
         { "bin", 'b', SX_CMDLINE_OPTYPE_FLAG_SET, &args.compile_bin, 1, "Compile to bytecode instead of source. requires ENABLE_D3D11_COMPILER build flag", 0x0 },

@@ -9,6 +9,10 @@ It uses [glslang](https://github.com/KhronosGroup/glslang) for parsing GLSL and 
 
 ## ChangeLog
 
+### 1.13.1
+
+- Split legacy --automap option into two distinct flags: --auto-map-bindings (for resource bindings) and --auto-map-locations (for shader I/O locations).
+
 ### 1.13.0
 
 - Target MSL default version to 2.0 (requires macos13 or ios11)
