@@ -9,6 +9,10 @@ It uses [glslang](https://github.com/KhronosGroup/glslang) for parsing GLSL and 
 
 ## ChangeLog
 
+### 1.13.0
+
+- Target MSL default version to 2.0 (requires macos13 or ios11)
+
 ### 1.12.0
 
 - Fix msl vertex location overlaps when contains mat4

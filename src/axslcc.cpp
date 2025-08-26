@@ -63,6 +63,7 @@
 //                  Add option --msl_ios for target iOS MSL
 //                  Add option --fixup_clipspace
 //                  Add option --msl_reset_vlocs
+//      1.13.0      Target MSL default version to 2.0
 
 /**
 * @since 1.9.5 
@@ -116,7 +117,7 @@
 #include "../3rdparty/sjson/sjson.h"
 
 #define VERSION_MAJOR 1
-#define VERSION_MINOR 12
+#define VERSION_MINOR 13
 #define VERSION_SUB 0
 
 using namespace axslc;
@@ -1336,6 +1337,7 @@ static int cross_compile(const cmd_args& args, std::vector<uint32_t>& spirv,
             spirv_cross::CompilerMSL::Options msl_opts = msl->get_msl_options();
             msl_opts.enable_decoration_binding = true;
             // msl_opts.enable_base_index_zero = true;
+            msl_opts.msl_version = args.profile_ver;
             msl_opts.ios_support_base_vertex_instance = true; // ios-9.0+
             msl_opts.platform = args.msl_ios ? spirv_cross::CompilerMSL::Options::Platform::iOS : spirv_cross::CompilerMSL::Options::Platform::macOS;
             msl->set_msl_options(msl_opts);
@@ -2042,14 +2044,18 @@ int main(int argc, char* argv[])
 
     // Set default shader profile version
     // HLSL: 50 (5.0)
-    // GLSL: 200 (2.00)
+    // GLSL: 330 (3.3)
+    // ESSL: 300 (3.0)
+    // MSL: 20000 (2.0)
     if (args.profile_ver == 0) {
         if (args.lang == SHADER_LANG_ESSL)
-            args.profile_ver = 200;
+            args.profile_ver = 300;
         else if (args.lang == SHADER_LANG_HLSL)
             args.profile_ver = 50; // D3D11
         else if (args.lang == SHADER_LANG_GLSL)
             args.profile_ver = 330;
+        else if (args.lang == SHADER_LANG_MSL)
+            args.profile_ver = spirv_cross::CompilerMSL::Options::make_msl_version(2, 0);
     }
 
 #if SX_PLATFORM_WINDOWS
