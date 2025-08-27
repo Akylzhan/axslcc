@@ -65,6 +65,7 @@
 //                  Add option --msl_reset_vlocs
 //      1.13.0      Target MSL default version to 2.0
 //      1.13.1      Split legacy --automap option into two distinct flags: --auto-map-bindings (for resource bindings) and --auto-map-locations (for shader I/O locations).
+//      1.13.2      Add option --inline-ubo-members, previous option name: --flatten-ubos is deprecated
 
 /**
  * @since 1.9.5
@@ -119,7 +120,7 @@
 
 #define VERSION_MAJOR 1
 #define VERSION_MINOR 13
-#define VERSION_SUB 1
+#define VERSION_SUB 2
 
 using namespace axslc;
 
@@ -363,7 +364,9 @@ struct cmd_args {
     int silent;
     int validate;
     int list_includes;
-    int flatten_ubos; // obsoluted
+    int flatten_ubo; // for GLES < 3.0 only
+    int inline_ubo_members; // for GLES < 3.0 only
+    int automap; // deprecated
     int auto_map_bindings;
     int auto_map_locations;
     int msl_ios;
@@ -759,7 +762,7 @@ static void output_resource_info_json(sjson_context* jctx, sjson_node* jparent,
     const spirv_cross::Compiler& compiler,
     const spirv_cross::SmallVector<spirv_cross::Resource>& ress,
     resource_type res_type = RES_TYPE_REGULAR,
-    bool flatten_ubos = false)
+    bool flatten_ubo = false)
 {
 
     auto resolve_variable_type = [](const spirv_cross::SPIRType& type) -> const char* {
@@ -883,7 +886,7 @@ static void output_resource_info_json(sjson_context* jctx, sjson_node* jparent,
             sjson_put_int(jctx, jres, "hlsl_counter_buffer_id", counter_id);
 
         if (res_type == RES_TYPE_UNIFORM_BUFFER) {
-            if (flatten_ubos) {
+            if (flatten_ubo) {
                 sjson_put_string(jctx, jres, "type", "float4");
                 sjson_put_int(jctx, jres, "array",
                     sx_max((int)block_size, 16) / 16);
@@ -922,8 +925,10 @@ static void output_reflection_json(const cmd_args& args, const spirv_cross::Comp
         sjson_put_bool(jctx, jroot, "bytecode", true);
     if (args.debug_bin)
         sjson_put_bool(jctx, jroot, "debug_info", true);
-    if (args.flatten_ubos)
-        sjson_put_bool(jctx, jroot, "flatten_ubos", true);
+    if (args.flatten_ubo)
+        sjson_put_bool(jctx, jroot, "flatten_ubo", true);
+    if (args.inline_ubo_members)
+        sjson_put_bool(jctx, jroot, "inline_ubo", true);
 
     sjson_node* jshader = sjson_put_obj(jctx, jroot, get_stage_name(stage));
     sjson_put_string(jctx, jshader, "file", filename);
@@ -947,7 +952,7 @@ static void output_reflection_json(const cmd_args& args, const spirv_cross::Comp
         output_resource_info_json(jctx, sjson_put_array(jctx, jshader, "storage_buffers"), compiler, ress.storage_buffers, RES_TYPE_SSBO);
     if (!ress.uniform_buffers.empty()) {
         output_resource_info_json(jctx, sjson_put_array(jctx, jshader, "uniform_buffers"), compiler, ress.uniform_buffers,
-            RES_TYPE_UNIFORM_BUFFER, args.flatten_ubos ? true : false);
+            RES_TYPE_UNIFORM_BUFFER, args.flatten_ubo ? true : false);
     }
     if (!ress.push_constant_buffers.empty())
         output_resource_info_json(jctx, sjson_put_array(jctx, jshader, "push_cbs"), compiler, ress.push_constant_buffers);
@@ -980,7 +985,7 @@ static void output_resource_info_bin(sx_mem_writer* w, uint32_t* num_values,
     const spirv_cross::Compiler& compiler,
     const spirv_cross::SmallVector<spirv_cross::Resource>& ress,
     resource_type res_type = RES_TYPE_REGULAR,
-    bool flatten_ubos = false)
+    bool flatten_ubo = false)
 {
     auto resolve_variable_type = [](const spirv_cross::SPIRType& type) -> uint32_t {
         int count = sizeof(k_uniform_map) / sizeof(uniform_type_mapping);
@@ -1058,7 +1063,7 @@ static void output_resource_info_bin(sx_mem_writer* w, uint32_t* num_values,
             sx_strcpy(u.name, sizeof(u.name), name.c_str());
             u.binding = binding;
             u.size_bytes = block_size;
-            if (flatten_ubos) {
+            if (flatten_ubo) {
                 u.array_size = (uint16_t)sx_max((int)block_size, 16) / 16;
                 u.num_members = 0;
             } else {
@@ -1150,7 +1155,7 @@ static int output_reflection_bin(const cmd_args& args, const spirv_cross::Compil
     sc_chunk_refl refl;
     sx_memset(&refl, 0x0, sizeof(refl));
     sx_os_path_basename(refl.name, sizeof(refl.name), filename);
-    refl.flatten_ubos = args.flatten_ubos;
+    refl.flatten_ubo = args.flatten_ubo;
     refl.debug_info = args.debug_bin;
     sx_mem_write_var(&w, refl);
 
@@ -1160,7 +1165,7 @@ static int output_reflection_bin(const cmd_args& args, const spirv_cross::Compil
 
     if (!ress.uniform_buffers.empty()) {
         output_resource_info_bin(&w, &refl.num_uniform_buffers, compiler, ress.uniform_buffers,
-            RES_TYPE_UNIFORM_BUFFER, args.flatten_ubos ? true : false);
+            RES_TYPE_UNIFORM_BUFFER, !!args.flatten_ubo);
     }
 
     if (!ress.sampled_images.empty()) {
@@ -1346,11 +1351,16 @@ static int cross_compile(const cmd_args& args, std::vector<uint32_t>& spirv,
         }
 
         // Flatten ubos
-        if (args.flatten_ubos) {
+        if (args.flatten_ubo && args.profile_ver < 300) {
+            // requires all member of uniform have same base type
             for (auto& ubo : ress.uniform_buffers)
                 compiler->flatten_buffer_block(ubo.id);
             for (auto& ubo : ress.push_constant_buffers)
                 compiler->flatten_buffer_block(ubo.id);
+        }
+
+        if (args.inline_ubo_members && args.profile_ver < 300) {
+            opts.inline_ubo_members = true;
         }
 
         // Reset vertex input locations for MSL
@@ -1789,11 +1799,10 @@ static int compile_files(cmd_args& args, const TBuiltInResource& limits_conf)
         shader->setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_0);
 
         // refer to: https://github.com/septag/glslcc/issues/18
-        if (args.auto_map_bindings) {
+        if (args.auto_map_bindings || args.automap)
             shader->setAutoMapBindings(true);
-        }
 
-        if (args.auto_map_locations)
+        if (args.auto_map_locations || args.automap)
             shader->setAutoMapLocations(true);
 
         add_defines(shader, args, def);
@@ -1925,12 +1934,31 @@ int main(int argc, char* argv[])
         { "msl-reset-vlocs", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.msl_reset_vlocs, 1, "Whether reset MSL vertex locations", 0x0 },
         { "auto-map-bindings", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.auto_map_bindings, 1, "This option remove binding requirement in shader", 0x0 },
         { "auto-map-locations", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.auto_map_locations, 1, "This option remove location requirement in shader", 0x0 },
-        { "flatten-ubos", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.flatten_ubos, 1, "Flatten UBOs, useful for ES2 shaders (obsoleted)", 0x0 },
+        { "automap", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.automap, 1, "This option remove binding and location requirement in shader (deprecated)", 0x0 },
+        { "inline-ubo-members", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.inline_ubo_members, 1, "Converts uniform block members into individual global uniform declarations.\n"
+                                                                                              "\tExample : \n"
+                                                                                              "\t\tuniform fs_ub {\n"
+                                                                                              "\t\t\tfloat a;\n"
+                                                                                              "\t\t\tfloat b;\n"
+                                                                                              "\t\t};\n"
+                                                                                              "\tbecomes : \n"
+                                                                                              "\t\tuniform float a;\n"
+                                                                                              "\t\tuniform float b;",
+            0x0 },
+        { "flatten-ubos", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.inline_ubo_members, 1, "Deprecated, use --inline-ubo-members instead",
+            0x0 },
         { "fixup-clipspace", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.fixup_clipspace, 1, "Fixup Z clip-space at the end of a vertex shader. The behavior is backend-dependent.\n"
                                                                                         "\t\tGLSL: Rewrites [0, w] Z range (D3D/Metal/Vulkan) to GL-style [-w, w].\n"
                                                                                         "\t\tHLSL/MSL: Rewrites [-w, w] Z range (GL) to D3D/Metal/Vulkan-style [0, w].\n",
             0x0 },
         // axmol spec end
+
+        { "flatten-ubo", 0x0, SX_CMDLINE_OPTYPE_FLAG_SET, &args.flatten_ubo, 1, "Emit UBOs as plain uniform arrays which are suitable for use with glUniform4*v().\n"
+                                                                                "\t\tThis can be an optimization on GL implementations where this is faster or works around buggy driver implementations.\n"
+                                                                                "\t\tE.g.: uniform MyUBO { vec4 a; float b, c, d, e; }; will be emitted as uniform vec4 MyUBO[2];\n"
+                                                                                "\t\tCaveat: You cannot mix and match floating-point and integer in the same UBO with this option.\n"
+                                                                                "\t\tLegacy GLSL/ESSL (where this flattening makes sense) does not support bit-casting, which would have been the obvious workaround.\n",
+            0x0 },
 
         { "reflect", 'r', SX_CMDLINE_OPTYPE_OPTIONAL, 0x0, 'r', "Output shader reflection information to a json file", "Filepath" },
         { "sgs", 'G', SX_CMDLINE_OPTYPE_FLAG_SET, &args.sc_file, 1, "Output file should be packed SGS format", "Filepath" },

@@ -155,6 +155,18 @@ public:
 		// This workaround may cause significant performance degeneration on some Android devices.
 		bool enable_row_major_load_workaround = true;
 
+		// axslcc spec
+		// Converts uniform block members into individual global uniform declarations.
+		// Example:
+		//    uniform fs_ub {
+		//       float a;
+		//       float b;
+		//    }
+		// becomes:
+		//    uniform float a;
+		//    uniform float b;
+		bool inline_ubo_members = false;
+
 		// If non-zero, controls layout(num_views = N) in; in GL_OVR_multiview2.
 		uint32_t ovr_multiview_view_count = 0;
 
@@ -1083,6 +1095,11 @@ protected:
 
 	uint32_t get_fp_fast_math_flags_for_op(uint32_t result_type, uint32_t id) const;
 	bool has_legacy_nocontract(uint32_t result_type, uint32_t id) const;
+
+	// --- axslcc spec: inline ubo members support
+public:
+	void emit_buffer_block_inlined(const SPIRVariable &var);
+	// === axslcc spec
 
 private:
 	void init();

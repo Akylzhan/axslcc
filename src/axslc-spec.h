@@ -61,7 +61,7 @@ struct sc_chunk_refl {
     uint32_t num_uniform_buffers;
     uint32_t num_storage_images;
     uint32_t num_storage_buffers;
-    uint16_t flatten_ubos;
+    uint16_t flatten_ubo;
     uint16_t debug_info;
 
     // inputs: sc_refl_input[num_inputs]

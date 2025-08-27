@@ -2373,7 +2373,10 @@ void CompilerGLSL::emit_buffer_block(const SPIRVariable &var)
 		emit_buffer_block_flattened(var);
 	else if (is_legacy() || (!options.es && options.version == 130) ||
 	         (ubo_block && options.emit_uniform_buffer_as_plain_uniforms))
-		emit_buffer_block_legacy(var);
+		if (options.inline_ubo_members) // axslcc spec
+			emit_buffer_block_inlined(var);
+		else
+			emit_buffer_block_legacy(var);
 	else
 		emit_buffer_block_native(var);
 }
@@ -10797,6 +10800,8 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 					string qual_mbr_name = get_member_qualified_name(type_id, index);
 					if (!qual_mbr_name.empty())
 						expr = qual_mbr_name;
+					else if (options.inline_ubo_members) // axslcc spec
+						expr = to_member_name(*type, index);
 					else if (flatten_member_reference)
 						expr += join("_", to_member_name(*type, index));
 					else
@@ -20190,3 +20195,37 @@ bool CompilerGLSL::has_legacy_nocontract(uint32_t result_type, uint32_t id) cons
 	                      FPFastMathModeAllowReassocMask;
 	return (get_fp_fast_math_flags_for_op(result_type, id) & fp_flags) != fp_flags;
 }
+
+// --- axslcc spec
+void CompilerGLSL::emit_buffer_block_inlined(const SPIRVariable& var)
+{
+	auto &type = get<SPIRType>(var.basetype);
+	bool ssbo = var.storage == StorageClassStorageBuffer ||
+	            ir.meta[type.self].decoration.decoration_flags.get(DecorationBufferBlock);
+	if (ssbo)
+		SPIRV_CROSS_THROW("SSBOs not supported in legacy targets.");
+
+	// We're emitting the push constant block as a regular struct, so disable the block qualifier temporarily.
+	// Otherwise, we will end up emitting layout() qualifiers on naked structs which is not allowed.
+	auto &block_flags = ir.meta[type.self].decoration.decoration_flags;
+	bool block_flag = block_flags.get(DecorationBlock);
+	block_flags.clear(DecorationBlock);
+
+	add_resource_name(type.self);
+	auto name = type_to_glsl(type);
+	type.member_name_cache.clear();
+	uint32_t i = 0;
+	for (auto &member : type.member_types)
+	{
+		add_member_name(type, i);
+		statement_inner("uniform ");
+		emit_struct_member(type, member, i);
+		++i;
+	}
+	statement("");
+
+	if (block_flag)
+		block_flags.set(DecorationBlock);
+}
+
+// === axslcc spec
