@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.23..4.1)
 project(axslcc)
 
  if (WIN32)
@@ -25,7 +25,7 @@ option(ENABLE_SPVREMAPPER "Enables building of SPVRemapper" ON)
 option(ENABLE_AMD_EXTENSIONS "Enables support of AMD-specific extensions" ON)
 option(ENABLE_GLSLANG_BINARIES "Builds glslangValidator and spirv-remap" ON)
 option(ENABLE_NV_EXTENSIONS "Enables support of Nvidia-specific extensions" ON)
-option(ENABLE_HLSL "Enables HLSL input support" OFF)
+option(ENABLE_HLSL "Enables HLSL input support" ON)
 option(ENABLE_OPT "Enables spirv-opt capability if present" ON)
 
 option(USE_CCACHE "Use ccache" OFF)
@@ -64,6 +64,7 @@ if (MSVC)
 endif()
 
 set(ENABLE_CTEST FALSE CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
 set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 
 # halx99: optimize require https://github.com/KhronosGroup/SPIRV-Tools?

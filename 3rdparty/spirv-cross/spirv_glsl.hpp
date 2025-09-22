@@ -32,6 +32,8 @@
 
 namespace SPIRV_CROSS_NAMESPACE
 {
+struct GlslConstantNameMapping;
+
 enum PlsFormat
 {
 	PlsNone = 0,
@@ -120,9 +122,6 @@ public:
 		// Does not apply to shader storage or push constant blocks.
 		bool emit_uniform_buffer_as_plain_uniforms = false;
 
-		// halx99: Whether emit expanded uniforms for legacy GLSL 1.x
-		bool emit_expanded_uniforms = false;
-
 		// Emit OpLine directives if present in the module.
 		// May not correspond exactly to original source, but should be a good approximation.
 		bool emit_line_directives = false;
@@ -155,6 +154,18 @@ public:
 		// ensure row_major decoration is actually respected.
 		// This workaround may cause significant performance degeneration on some Android devices.
 		bool enable_row_major_load_workaround = true;
+
+		// axslcc spec
+		// Converts uniform block members into individual global uniform declarations.
+		// Example:
+		//    uniform fs_ub {
+		//       float a;
+		//       float b;
+		//    }
+		// becomes:
+		//    uniform float a;
+		//    uniform float b;
+		bool inline_ubo_members = false;
 
 		// If non-zero, controls layout(num_views = N) in; in GL_OVR_multiview2.
 		uint32_t ovr_multiview_view_count = 0;
@@ -300,6 +311,9 @@ public:
 		float_formatter = formatter;
 	}
 
+	// Returns the macro name corresponding to constant id
+	std::string constant_value_macro_name(uint32_t id) const;
+
 protected:
 	struct ShaderSubgroupSupportHelper
 	{
@@ -426,6 +440,8 @@ protected:
 	                                                   const uint32_t *args, uint32_t count);
 	virtual void emit_spv_amd_gcn_shader_op(uint32_t result_type, uint32_t result_id, uint32_t op, const uint32_t *args,
 	                                        uint32_t count);
+	void emit_non_semantic_shader_debug_info(uint32_t result_type, uint32_t result_id, uint32_t op,
+	                                         const uint32_t *args, uint32_t count);
 	virtual void emit_header();
 	void emit_line_directive(uint32_t file_id, uint32_t line_literal);
 	void build_workgroup_size(SmallVector<std::string> &arguments, const SpecializationConstant &x,
@@ -453,6 +469,7 @@ protected:
 	virtual std::string variable_decl(const SPIRType &type, const std::string &name, uint32_t id = 0);
 	virtual bool variable_decl_is_remapped_storage(const SPIRVariable &var, spv::StorageClass storage) const;
 	virtual std::string to_func_call_arg(const SPIRFunction::Parameter &arg, uint32_t id);
+	virtual void emit_workgroup_initialization(const SPIRVariable &var);
 
 	struct TextureFunctionBaseArguments
 	{
@@ -625,6 +642,8 @@ protected:
 		const char *uint16_t_literal_suffix = "us";
 		const char *nonuniform_qualifier = "nonuniformEXT";
 		const char *boolean_mix_function = "mix";
+		const char *printf_function = "debugPrintfEXT";
+		std::string constant_null_initializer = "";
 		SPIRType::BaseType boolean_in_struct_remapped_type = SPIRType::Boolean;
 		bool swizzle_is_function = false;
 		bool shared_is_implied = false;
@@ -632,6 +651,7 @@ protected:
 		bool explicit_struct_type = false;
 		bool use_initializer_list = false;
 		bool use_typed_initializer_list = false;
+		bool requires_matching_array_initializer = false;
 		bool can_declare_struct_inline = true;
 		bool can_declare_arrays_inline = true;
 		bool native_row_major_matrix = true;
@@ -658,6 +678,7 @@ protected:
 		bool workgroup_size_is_hidden = false;
 		bool requires_relaxed_precision_analysis = false;
 		bool implicit_c_integer_promotion_rules = false;
+		bool supports_spec_constant_array_size = true;
 	} backend;
 
 	void emit_struct(SPIRType &type);
@@ -668,7 +689,6 @@ protected:
 	void emit_buffer_block_native(const SPIRVariable &var);
 	void emit_buffer_reference_block(uint32_t type_id, bool forward_declaration);
 	void emit_buffer_block_legacy(const SPIRVariable &var);
-	void emit_buffer_block_expanded(const SPIRVariable& var); // halx99
 	void emit_buffer_block_flattened(const SPIRVariable &type);
 	void fixup_implicit_builtin_block_names(spv::ExecutionModel model);
 	void emit_declared_builtin_block(spv::StorageClass storage, spv::ExecutionModel model);
@@ -682,8 +702,9 @@ protected:
 	void emit_flattened_io_block_member(const std::string &basename, const SPIRType &type, const char *qual,
 	                                    const SmallVector<uint32_t> &indices);
 	void emit_block_chain(SPIRBlock &block);
+	BlockID emit_block_chain_inner(SPIRBlock &block);
+	void emit_block_chain_cleanup(SPIRBlock &block);
 	void emit_hoisted_temporaries(SmallVector<std::pair<TypeID, ID>> &temporaries);
-	std::string constant_value_macro_name(uint32_t id);
 	int get_constant_mapping_to_workgroup_component(const SPIRConstant &constant) const;
 	void emit_constant(const SPIRConstant &constant);
 	void emit_specialization_constant_op(const SPIRConstantOp &constant);
@@ -699,6 +720,7 @@ protected:
 	void emit_variable_temporary_copies(const SPIRVariable &var);
 
 	bool should_dereference(uint32_t id);
+	bool should_dereference_caller_param(uint32_t id);
 	bool should_forward(uint32_t id) const;
 	bool should_suppress_usage_tracking(uint32_t id) const;
 	void emit_mix_op(uint32_t result_type, uint32_t id, uint32_t left, uint32_t right, uint32_t lerp);
@@ -766,7 +788,7 @@ protected:
 	spv::StorageClass get_expression_effective_storage_class(uint32_t ptr);
 	virtual bool access_chain_needs_stage_io_builtin_translation(uint32_t base);
 
-	virtual void check_physical_type_cast(std::string &expr, const SPIRType *type, uint32_t physical_type);
+	virtual bool check_physical_type_cast(std::string &expr, const SPIRType *type, uint32_t physical_type);
 	virtual bool prepare_access_chain_for_scalar_access(std::string &expr, const SPIRType &type,
 	                                                    spv::StorageClass storage, bool &is_packed);
 
@@ -796,8 +818,13 @@ protected:
 	std::string declare_temporary(uint32_t type, uint32_t id);
 	void emit_uninitialized_temporary(uint32_t type, uint32_t id);
 	SPIRExpression &emit_uninitialized_temporary_expression(uint32_t type, uint32_t id);
-	void append_global_func_args(const SPIRFunction &func, uint32_t index, SmallVector<std::string> &arglist);
+	virtual void append_global_func_args(const SPIRFunction &func, uint32_t index, SmallVector<std::string> &arglist);
 	std::string to_non_uniform_aware_expression(uint32_t id);
+	std::string to_atomic_ptr_expression(uint32_t id);
+	std::string to_pretty_expression_if_int_constant(
+			uint32_t id,
+			const GlslConstantNameMapping *mapping_start, const GlslConstantNameMapping *mapping_end,
+			bool register_expression_read = true);
 	std::string to_expression(uint32_t id, bool register_expression_read = true);
 	std::string to_composite_constructor_expression(const SPIRType &parent_type, uint32_t id, bool block_like_type);
 	std::string to_rerolled_array_expression(const SPIRType &parent_type, const std::string &expr, const SPIRType &type);
@@ -826,7 +853,7 @@ protected:
 	void emit_output_variable_initializer(const SPIRVariable &var);
 	std::string to_precision_qualifiers_glsl(uint32_t id);
 	virtual const char *to_storage_qualifiers_glsl(const SPIRVariable &var);
-	std::string flags_to_qualifiers_glsl(const SPIRType &type, const Bitset &flags);
+	std::string flags_to_qualifiers_glsl(const SPIRType &type, uint32_t id, const Bitset &flags);
 	const char *format_to_glsl(spv::ImageFormat format);
 	virtual std::string layout_for_member(const SPIRType &type, uint32_t index);
 	virtual std::string to_interpolation_qualifiers(const Bitset &flags);
@@ -1013,6 +1040,8 @@ protected:
 	const Instruction *get_next_instruction_in_block(const Instruction &instr);
 	static uint32_t mask_relevant_memory_semantics(uint32_t semantics);
 
+	std::string convert_floate4m3_to_string(const SPIRConstant &value, uint32_t col, uint32_t row);
+	std::string convert_floate5m2_to_string(const SPIRConstant &value, uint32_t col, uint32_t row);
 	std::string convert_half_to_string(const SPIRConstant &value, uint32_t col, uint32_t row);
 	std::string convert_float_to_string(const SPIRConstant &value, uint32_t col, uint32_t row);
 	std::string convert_double_to_string(const SPIRConstant &value, uint32_t col, uint32_t row);
@@ -1064,6 +1093,14 @@ protected:
 	std::string format_float(float value) const;
 	std::string format_double(double value) const;
 
+	uint32_t get_fp_fast_math_flags_for_op(uint32_t result_type, uint32_t id) const;
+	bool has_legacy_nocontract(uint32_t result_type, uint32_t id) const;
+
+	// --- axslcc spec: inline ubo members support
+public:
+	void emit_buffer_block_inlined(const SPIRVariable &var);
+	// === axslcc spec
+
 private:
 	void init();
 
@@ -1072,7 +1109,6 @@ private:
 	void set_composite_constant(ConstantID const_id, TypeID type_id, const SmallVector<ConstantID> &initializers);
 	TypeID get_composite_member_type(TypeID type_id, uint32_t member_idx);
 	std::unordered_map<uint32_t, SmallVector<ConstantID>> const_composite_insert_ids;
-	std::vector<std::string> expanded_uniform_block_patterns; // halx99: expanded ub pattern for replace
 };
 } // namespace SPIRV_CROSS_NAMESPACE
 

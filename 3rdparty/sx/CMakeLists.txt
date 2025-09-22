@@ -24,7 +24,7 @@
 #       lunux (+ app.c): x11
 #       windows (+ gfx.c): dxgi d3d11
 #
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.23..4.1)
 project(sx)
 
 function(sx_remove_compile_options DEST_VAR COMPILER_FLAGS FLAGS)
